@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "pages:build": "next build && cp -r out/* .vercel/output/static/ 2>/dev/null || true",
     "start": "next start",
     "lint": "eslint . --ext .ts,.tsx"
   },
