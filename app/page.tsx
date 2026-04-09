@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { analyzeScreenshot, analyzeLink, analyzeText, generateQuiz } from "./lib/api";
+import type { AnalysisResult, QuizQuestion } from "./lib/api";
 
 type User = {
   id: string;
@@ -27,6 +29,9 @@ type KnowledgeCard = {
   reviewCount: number;
   confidence?: number;
   quizQuestion: string;
+  keyInsights?: string[];
+  followUpQuestions?: string[];
+  aiProcessed?: boolean;
 };
 
 type View = "dashboard" | "inbox" | "library" | "review" | "quiz" | "map" | "profile";
@@ -155,6 +160,10 @@ export default function Page() {
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [quizCardId, setQuizCardId] = useState<string | null>(null);
   const [quizReveal, setQuizReveal] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
+  const [quizLoading, setQuizLoading] = useState(false);
+  const imageFileRef = useRef<File | null>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -213,7 +222,7 @@ export default function Page() {
     setView("dashboard");
   }
 
-  function capture(inputType: KnowledgeCard["inputType"], value: string) {
+  async function capture(inputType: KnowledgeCard["inputType"], value: string) {
     if (!user || !value.trim()) return;
     const newCard = createCard(user.id, inputType, value.trim());
     const nextCards = recalcRelationships([newCard, ...cards.filter((c) => c.userId === user.id)]);
@@ -223,6 +232,67 @@ export default function Page() {
     setCaptureImageName("");
     setSelectedCardId(newCard.id);
     setView("library");
+
+    // Call AI API in background
+    setAnalyzing(true);
+    try {
+      let result: AnalysisResult | null = null;
+      if (inputType === "image" && imageFileRef.current) {
+        const base64 = await fileToBase64(imageFileRef.current);
+        imageFileRef.current = null;
+        result = await analyzeScreenshot(base64);
+      } else if (inputType === "link") {
+        result = await analyzeLink(value.trim());
+      } else if (inputType === "text") {
+        result = await analyzeText(value.trim());
+      }
+      if (result) {
+        setCards((prev) => {
+          const updated = prev.map((c) =>
+            c.id === newCard.id
+              ? {
+                  ...c,
+                  title: result!.title || c.title,
+                  summary: result!.summary || c.summary,
+                  tags: result!.tags?.length ? result!.tags : c.tags,
+                  domain: result!.domain || c.domain,
+                  keyInsights: result!.keyInsights || [],
+                  followUpQuestions: result!.followUpQuestions || [],
+                  quizQuestion: result!.followUpQuestions?.[0] || c.quizQuestion,
+                  aiProcessed: true,
+                }
+              : c
+          );
+          return recalcRelationships(updated);
+        });
+      }
+    } catch (err) {
+      console.error("AI analysis failed:", err);
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
+  function fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function loadQuiz(card: KnowledgeCard) {
+    setQuizLoading(true);
+    setQuizQuestions([]);
+    try {
+      const result = await generateQuiz({ title: card.title, summary: card.summary, tags: card.tags, domain: card.domain });
+      setQuizQuestions(result.questions || []);
+    } catch (err) {
+      console.error("Quiz generation failed:", err);
+    } finally {
+      setQuizLoading(false);
+    }
   }
 
   function reviewCard(cardId: string, confidence: number) {
@@ -258,6 +328,16 @@ export default function Page() {
               <Dashboard cards={cards} dueCards={dueCards} stats={stats} setView={setView} />
             )}
 
+            {analyzing && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                <div className="card-parchment p-8 text-center">
+                  <div className="text-4xl animate-pulse">🔮</div>
+                  <div className="mt-4 text-lg font-semibold text-gold-light">AI is analyzing your knowledge...</div>
+                  <div className="mt-2 text-sm text-parchment/60">The magical academy is processing your spell</div>
+                </div>
+              </div>
+            )}
+
             {view === "inbox" && (
               <InboxView
                 captureText={captureText}
@@ -268,6 +348,7 @@ export default function Page() {
                 setCaptureImageName={setCaptureImageName}
                 capture={capture}
                 canCapture={!!user}
+                imageFileRef={imageFileRef}
               />
             )}
 
@@ -295,7 +376,7 @@ export default function Page() {
             )}
 
             {view === "quiz" && (
-              <QuizView card={quizCard} quizReveal={quizReveal} setQuizReveal={setQuizReveal} setQuizCardId={setQuizCardId} cards={cards} />
+              <QuizView card={quizCard} quizReveal={quizReveal} setQuizReveal={setQuizReveal} setQuizCardId={setQuizCardId} cards={cards} quizQuestions={quizQuestions} quizLoading={quizLoading} loadQuiz={loadQuiz} />
             )}
 
             {view === "map" && (
@@ -337,7 +418,7 @@ function Hero({ user, stats, onSignIn }: { user: User | null; stats: { captured:
             Turn fragments into a <span className="text-gold">living spellbook</span>.
           </h1>
           <p className="mt-4 max-w-2xl text-parchment/75 md:text-lg">
-            Capture screenshots, links, and notes. Let AI mock-processing extract title, summary, tags, concepts, review schedule, and quiz prompts — all wrapped in a magical academy interface.
+            Capture screenshots, links, and notes. AI-powered analysis extracts title, summary, tags, concepts, review schedule, and quiz prompts — all wrapped in a magical academy interface.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             {!user ? (
@@ -458,8 +539,8 @@ function Dashboard({ cards, dueCards, stats, setView }: { cards: KnowledgeCard[]
   );
 }
 
-function InboxView(props: { captureText: string; setCaptureText: (v: string) => void; captureLink: string; setCaptureLink: (v: string) => void; captureImageName: string; setCaptureImageName: (v: string) => void; capture: (type: KnowledgeCard["inputType"], value: string) => void; canCapture: boolean; }) {
-  const { captureText, setCaptureText, captureLink, setCaptureLink, captureImageName, setCaptureImageName, capture, canCapture } = props;
+function InboxView(props: { captureText: string; setCaptureText: (v: string) => void; captureLink: string; setCaptureLink: (v: string) => void; captureImageName: string; setCaptureImageName: (v: string) => void; capture: (type: KnowledgeCard["inputType"], value: string) => void; canCapture: boolean; imageFileRef: React.MutableRefObject<File | null>; }) {
+  const { captureText, setCaptureText, captureLink, setCaptureLink, captureImageName, setCaptureImageName, capture, canCapture, imageFileRef } = props;
   return (
     <div className="space-y-6">
       {!canCapture && <div className="glass-panel p-4 text-sm text-gold-light">Sign in first to unlock multi-user scoped capture and storage.</div>}
@@ -471,7 +552,7 @@ function InboxView(props: { captureText: string; setCaptureText: (v: string) => 
           <h3 className="mt-2 text-xl font-semibold">Image to knowledge</h3>
           <p className="mt-2 text-sm text-parchment/65">MVP mode stores the filename as a screenshot artifact, then mock-AI processes it into a card.</p>
           <label className="mt-5 block rounded-xl border border-dashed border-gold/30 p-6 text-center hover:border-gold/60">
-            <input type="file" accept="image/*" className="hidden" onChange={(e) => setCaptureImageName(e.target.files?.[0]?.name || "")} />
+            <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; setCaptureImageName(f?.name || ""); imageFileRef.current = f || null; }} />
             <div className="text-3xl">🖼️</div>
             <div className="mt-2 text-sm text-parchment/70">{captureImageName || "Tap to choose screenshot"}</div>
           </label>
@@ -480,13 +561,13 @@ function InboxView(props: { captureText: string; setCaptureText: (v: string) => 
       </div>
 
       <div className="glass-panel p-6">
-        <div className="text-sm uppercase tracking-[0.25em] text-gold/60">Mock AI pipeline</div>
+        <div className="text-sm uppercase tracking-[0.25em] text-gold/60">AI-powered pipeline</div>
         <div className="mt-4 grid gap-4 md:grid-cols-4">
           {[
-            ["1", "Capture", "Raw text / link / image filename"],
-            ["2", "Understand", "Title, summary, tags, concepts"],
-            ["3", "Organize", "Dynamic domain + related cards"],
-            ["4", "Retain", "Review schedule + quiz prompt"],
+            ["1", "Capture", "Raw text / link / screenshot"],
+            ["2", "AI Analyze", "Qwen AI extracts insights"],
+            ["3", "Organize", "Auto domain + related cards"],
+            ["4", "Retain", "Review schedule + AI quiz"],
           ].map(([n, t, d]) => <div key={n} className="rounded-xl border border-gold/10 p-4"><div className="text-gold">Step {n}</div><div className="mt-2 font-semibold">{t}</div><div className="mt-2 text-sm text-parchment/65">{d}</div></div>)}
         </div>
       </div>
@@ -546,10 +627,23 @@ function CardDetail({ card, cards }: { card: KnowledgeCard | null; cards: Knowle
       <div className="card-parchment p-6">
         <div className="flex items-start justify-between gap-3"><div><div className="text-sm uppercase tracking-[0.25em] text-gold/60">Knowledge card</div><h3 className="mt-2 text-2xl font-semibold">{card.title}</h3></div><span className="rounded-full bg-gold/10 px-3 py-1 text-sm text-gold">{card.inputType}</span></div>
         <p className="mt-4 text-parchment/75">{card.summary}</p>
+        {card.aiProcessed && <div className="mt-2 inline-block rounded-full bg-green-500/20 px-2 py-0.5 text-xs text-green-300">✨ AI analyzed</div>}
         <div className="mt-5 grid gap-3 md:grid-cols-2">
           <InfoBlock title="Tags" items={card.tags.map((t) => `#${t}`)} />
           <InfoBlock title="Concepts" items={card.concepts} />
         </div>
+        {card.keyInsights && card.keyInsights.length > 0 && (
+          <div className="mt-4 rounded-xl border border-gold/10 p-4">
+            <div className="text-sm text-parchment/60">Key Insights</div>
+            <ul className="mt-2 space-y-1 text-sm text-parchment/75">{card.keyInsights.map((i, idx) => <li key={idx}>💡 {i}</li>)}</ul>
+          </div>
+        )}
+        {card.followUpQuestions && card.followUpQuestions.length > 0 && (
+          <div className="mt-4 rounded-xl border border-gold/10 p-4">
+            <div className="text-sm text-parchment/60">Follow-up Questions</div>
+            <ul className="mt-2 space-y-1 text-sm text-parchment/75">{card.followUpQuestions.map((q, idx) => <li key={idx}>❓ {q}</li>)}</ul>
+          </div>
+        )}
       </div>
       <div className="glass-panel p-6">
         <div className="text-sm uppercase tracking-[0.25em] text-gold/60">Related cards</div>
@@ -589,16 +683,58 @@ function ReviewView({ dueCards, onRate }: { dueCards: KnowledgeCard[]; onRate: (
   );
 }
 
-function QuizView({ card, quizReveal, setQuizReveal, setQuizCardId, cards }: { card: KnowledgeCard | null; quizReveal: boolean; setQuizReveal: (v: boolean) => void; setQuizCardId: (v: string) => void; cards: KnowledgeCard[]; }) {
+function QuizView({ card, quizReveal, setQuizReveal, setQuizCardId, cards, quizQuestions, quizLoading, loadQuiz }: { card: KnowledgeCard | null; quizReveal: boolean; setQuizReveal: (v: boolean) => void; setQuizCardId: (v: string) => void; cards: KnowledgeCard[]; quizQuestions: QuizQuestion[]; quizLoading: boolean; loadQuiz: (card: KnowledgeCard) => void; }) {
+  const [selectedAnswers, setSelectedAnswers] = useState<Record<number, number>>({});
   return (
     <div className="space-y-6">
       <div className="card-parchment p-6">
-        <div className="flex items-center justify-between gap-3"><div><div className="text-sm uppercase tracking-[0.25em] text-gold/60">AI quiz</div><h2 className="mt-2 text-2xl font-semibold">Recall challenge</h2></div><select className="input-magic max-w-xs" value={card?.id || ""} onChange={(e) => { setQuizCardId(e.target.value); setQuizReveal(false); }}>{cards.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}</select></div>
+        <div className="flex items-center justify-between gap-3"><div><div className="text-sm uppercase tracking-[0.25em] text-gold/60">AI quiz</div><h2 className="mt-2 text-2xl font-semibold">Recall challenge</h2></div><select className="input-magic max-w-xs" value={card?.id || ""} onChange={(e) => { setQuizCardId(e.target.value); setQuizReveal(false); setSelectedAnswers({}); }}>{cards.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}</select></div>
         {!card ? <div className="mt-6"><EmptyState title="No quiz material yet" subtitle="Capture some cards first, then start self-testing." /></div> : (
           <div className="mt-6 space-y-4">
-            <div className="glass-panel p-5"><div className="text-sm text-gold-light">Question</div><p className="mt-3 text-lg">{card.quizQuestion}</p></div>
+            <div className="glass-panel p-5"><div className="text-sm text-gold-light">Basic Question</div><p className="mt-3 text-lg">{card.quizQuestion}</p></div>
             <button className="btn-magic" onClick={() => setQuizReveal(!quizReveal)}>{quizReveal ? "Hide answer" : "Reveal answer"}</button>
             {quizReveal && <div className="glass-panel p-5"><div className="text-sm text-gold-light">Answer cue</div><p className="mt-3 text-parchment/75">{card.summary}</p><div className="mt-4 flex flex-wrap gap-2">{card.tags.map((t) => <span key={t} className="tag-magic">#{t}</span>)}</div></div>}
+            
+            {/* AI Generated Quiz */}
+            <div className="mt-6 border-t border-gold/20 pt-6">
+              <div className="flex items-center justify-between">
+                <div className="text-sm uppercase tracking-[0.25em] text-gold/60">🧠 AI-generated quiz</div>
+                <button className="btn-secondary text-sm" onClick={() => loadQuiz(card)} disabled={quizLoading}>{quizLoading ? "🔮 Generating..." : "✨ Generate AI Quiz"}</button>
+              </div>
+              {quizLoading && <div className="mt-4 text-center text-parchment/60 animate-pulse">🔮 AI is crafting your quiz questions...</div>}
+              {quizQuestions.length > 0 && (
+                <div className="mt-4 space-y-4">
+                  {quizQuestions.map((q, qi) => (
+                    <div key={qi} className="glass-panel p-4">
+                      <div className="font-semibold text-parchment-light">Q{qi + 1}: {q.question}</div>
+                      <div className="mt-3 space-y-2">
+                        {q.options.map((opt, oi) => (
+                          <button
+                            key={oi}
+                            className={`w-full rounded-lg border p-3 text-left text-sm transition ${
+                              selectedAnswers[qi] === oi
+                                ? oi === q.correctIndex
+                                  ? "border-green-500 bg-green-500/20 text-green-300"
+                                  : "border-red-500 bg-red-500/20 text-red-300"
+                                : "border-gold/10 hover:border-gold/30"
+                            }`}
+                            onClick={() => setSelectedAnswers((prev) => ({ ...prev, [qi]: oi }))}
+                          >
+                            {opt}
+                          </button>
+                        ))}
+                      </div>
+                      {selectedAnswers[qi] !== undefined && (
+                        <div className={`mt-2 rounded-lg p-3 text-sm ${selectedAnswers[qi] === q.correctIndex ? "bg-green-500/10 text-green-300" : "bg-red-500/10 text-red-300"}`}>
+                          {selectedAnswers[qi] === q.correctIndex ? "✅ Correct!" : `❌ Wrong. Correct: ${q.options[q.correctIndex]}`}
+                          {q.explanation && <div className="mt-1 text-parchment/60">{q.explanation}</div>}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
