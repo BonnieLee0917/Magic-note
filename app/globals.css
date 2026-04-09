@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-navy text-parchment font-serif;
+  }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: #0a0e27; }
+  ::-webkit-scrollbar-thumb { background: #d4a843; border-radius: 3px; }
+}
+
+@layer components {
+  .card-parchment {
+    @apply bg-gradient-to-br from-navy-light to-purple-dark border border-gold/20 rounded-xl;
+    background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23d4a843' fill-opacity='0.03'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  }
+  .btn-magic {
+    @apply px-4 py-2 bg-gradient-to-r from-gold-dark to-gold text-navy font-bold rounded-lg 
+           hover:from-gold hover:to-gold-light transition-all duration-300 shadow-magic hover:shadow-magic-lg;
+  }
+  .btn-secondary {
+    @apply px-4 py-2 border border-gold/30 text-gold rounded-lg hover:bg-gold/10 transition-all;
+  }
+  .input-magic {
+    @apply w-full px-4 py-3 bg-navy-dark/80 border border-gold/20 rounded-lg text-parchment 
+           placeholder:text-parchment/30 focus:border-gold/50 focus:outline-none focus:shadow-magic transition-all;
+  }
+  .nav-item {
+    @apply flex flex-col items-center gap-1 px-3 py-2 text-parchment/50 hover:text-gold transition-colors text-xs;
+  }
+  .nav-item.active {
+    @apply text-gold;
+  }
+  .tag-magic {
+    @apply px-2 py-0.5 text-xs rounded-full bg-purple/50 text-gold-light border border-gold/20;
+  }
+  .glass-panel {
+    @apply bg-navy-light/80 backdrop-blur-md border border-gold/10 rounded-xl;
+  }
+}
+
+/* Stars animation */
+@keyframes twinkle {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+.star-field::before {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-image: 
+    radial-gradient(2px 2px at 10% 20%, #ffd700 0%, transparent 100%),
+    radial-gradient(2px 2px at 30% 60%, #7b68ee 0%, transparent 100%),
+    radial-gradient(1px 1px at 50% 10%, #ffd700 0%, transparent 100%),
+    radial-gradient(1px 1px at 70% 80%, #7b68ee 0%, transparent 100%),
+    radial-gradient(2px 2px at 90% 40%, #ffd700 0%, transparent 100%),
+    radial-gradient(1px 1px at 15% 90%, #d4a843 0%, transparent 100%),
+    radial-gradient(2px 2px at 85% 15%, #7b68ee 0%, transparent 100%),
+    radial-gradient(1px 1px at 45% 45%, #ffd700 0%, transparent 100%);
+  animation: twinkle 4s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}

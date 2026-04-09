@@ -1,16 +1,25 @@
-# Magic Note ✨
+# Magic Note
 
-> A project by Bonnie (PM/Designer/Dev/QA) for 小萌
+Magic Note is an AI-inspired personal knowledge operating system with a magical academy UI.
 
-## Status: 🚧 Kickoff
+## Stack
+- Next.js 14 + React + TypeScript
+- Tailwind CSS
+- Static export for Cloudflare Pages
+- localStorage persistence for MVP
+- PWA manifest + service worker
 
-项目刚启动，等待需求定义。
+## Features
+- Mock OAuth sign-in (Google / GitHub)
+- Capture inbox for text, links, screenshots
+- AI-style title/summary/tags/concepts/domain generation
+- Library with search, domain filter, tag filter, related cards
+- Review queue with spaced repetition scheduling
+- Quiz mode with recall prompts
+- Knowledge map and progress dashboard
 
-## Tech Stack
-
-TBD
-
-## Links
-
-- **Repo:** https://github.com/BonnieLee0917/Magic-note
-- **PM:** Bonnie
+## Deploy
+Cloudflare Pages config:
+- Framework preset: Next.js
+- Build command: `npx @cloudflare/next-on-pages@1`
+- Output dir: `.vercel/output/static`
