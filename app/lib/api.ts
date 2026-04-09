@@ -53,3 +53,4 @@ export async function generateQuiz(card: {
 }): Promise<{ questions: QuizQuestion[] }> {
   return apiCall("/api/quiz/generate", card);
 }
+// force redeploy Thu Apr  9 08:48:24 PM CST 2026
