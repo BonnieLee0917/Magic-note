@@ -9,7 +9,6 @@ const translations = {
   // Nav
   navInbox: { zh: "🦉 猫头鹰邮局", en: "🦉 Owl Post" },
   navLibrary: { zh: "📜 咒语图书馆", en: "📜 Spell Library" },
-  navReview: { zh: "🔮 冥想盆", en: "🔮 Pensieve" },
   navQuiz: { zh: "⚡ 魔法测验", en: "⚡ Spell Quiz" },
   navMap: { zh: "🌙 星图", en: "🌙 Star Map" },
   navProfile: { zh: "🗝️ 密室", en: "🗝️ Chamber" },
@@ -17,7 +16,6 @@ const translations = {
   // Headers
   headerInbox: { zh: "投递你的魔法素材", en: "Capture what matters" },
   headerLibrary: { zh: "你的咒语收藏馆", en: "A clean library of insights" },
-  headerReview: { zh: "唤醒沉睡的记忆", en: "Revisit the ideas worth keeping" },
   headerQuiz: { zh: "检验你的魔法修行", en: "Test what you actually learned" },
   headerMap: { zh: "探索你的知识星图", en: "See your knowledge by domain" },
   headerProfile: { zh: "你的修炼档案", en: "Your study rhythm" },
@@ -68,8 +66,6 @@ const translations = {
   // Empty states
   emptyLibraryTitle: { zh: "✨ 图书馆还是空的", en: "✨ No cards yet" },
   emptyLibraryBody: { zh: "去猫头鹰邮局投递素材吧，AI 会为你生成知识卡片。", en: "Start from Owl Post with text, links, or screenshots. Your AI summaries will appear here." },
-  emptyReviewTitle: { zh: "🔮 暂无待复习的记忆", en: "🔮 Nothing to review" },
-  emptyReviewBody: { zh: "先去分析一条笔记，冥想盆会帮你安排复习节奏。", en: "Analyze your first note, then come back for spaced reflection." },
   emptyQuizBody: { zh: "还没有测验，点击生成来检验记忆吧。", en: "No quiz yet. Generate one to practice recall from this card." },
   emptyQuizTitle: { zh: "未选择卡片", en: "No card selected" },
   emptyQuizTitleBody: { zh: "先选一张知识卡片，再从中生成测验。", en: "Open a knowledge card first, then generate a quiz from it." },
@@ -95,6 +91,10 @@ const translations = {
   errorSelectImage: { zh: "请选择一张图片。", en: "Please select an image to upload." },
   errorGeneric: { zh: "出了点问题，请重试。", en: "Something went wrong." },
   errorQuiz: { zh: "测验生成失败，请重试。", en: "Quiz generation failed." },
+
+  // Library filter
+  filterAll: { zh: "全部", en: "All" },
+  filterReview: { zh: "待复习", en: "To Review" },
 } as const;
 
 export type TKey = keyof typeof translations;

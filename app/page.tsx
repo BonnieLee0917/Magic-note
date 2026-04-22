@@ -11,7 +11,8 @@ import {
 } from "./lib/api";
 import { Lang, t, TKey } from "./i18n";
 
-type NavKey = "Inbox" | "Library" | "Review" | "Quiz" | "Map" | "Profile";
+type NavKey = "Inbox" | "Library" | "Quiz" | "Map" | "Profile";
+type LibraryFilter = "all" | "review";
 type InputMode = "text" | "link" | "screenshot";
 type Theme = "light" | "dark";
 
@@ -24,7 +25,6 @@ type StoredCard = AnalysisResult & {
 const navItems: Array<{ key: NavKey; label: TKey }> = [
   { key: "Inbox", label: "navInbox" },
   { key: "Library", label: "navLibrary" },
-  { key: "Review", label: "navReview" },
   { key: "Quiz", label: "navQuiz" },
   { key: "Map", label: "navMap" },
   { key: "Profile", label: "navProfile" },
@@ -33,7 +33,6 @@ const navItems: Array<{ key: NavKey; label: TKey }> = [
 const headerMap: Record<NavKey, TKey> = {
   Inbox: "headerInbox",
   Library: "headerLibrary",
-  Review: "headerReview",
   Quiz: "headerQuiz",
   Map: "headerMap",
   Profile: "headerProfile",
@@ -57,6 +56,7 @@ export default function Home() {
   const [quiz, setQuiz] = useState<QuizQuestion[]>([]);
   const [quizCardTitle, setQuizCardTitle] = useState("");
   const [selectedAnswers, setSelectedAnswers] = useState<Record<number, number>>({});
+  const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("all");
 
   useEffect(() => {
     const savedTheme = (localStorage.getItem("magic-note-theme") as Theme) || "dark";
@@ -323,11 +323,27 @@ export default function Home() {
               )}
 
               {activeNav === "Library" && (
-                <section className={cards.length <= 2 ? "space-y-4" : "grid gap-4 md:grid-cols-2 xl:grid-cols-3"}>
+                <section>
+                  <div className="mb-4 flex gap-2">
+                    {(["all", "review"] as LibraryFilter[]).map((f) => (
+                      <button
+                        key={f}
+                        onClick={() => setLibraryFilter(f)}
+                        className={`theme-transition rounded-full px-4 py-2 text-sm ${
+                          libraryFilter === f
+                            ? "bg-[var(--btn-bg)] text-white shadow-[0_0_18px_rgba(201,168,76,0.18)]"
+                            : "bg-[var(--tag-bg)] text-[var(--text-secondary)] hover:text-[var(--text)]"
+                        }`}
+                      >
+                        {t(f === "all" ? "filterAll" : "filterReview", lang)}
+                      </button>
+                    ))}
+                  </div>
+                  <div className={(libraryFilter === "review" ? cards.slice(0, 5) : cards).length <= 2 ? "space-y-4" : "grid gap-4 md:grid-cols-2 xl:grid-cols-3"}>
                   {cards.length === 0 ? (
                     <EmptyState title={t("emptyLibraryTitle", lang)} body={t("emptyLibraryBody", lang)} />
                   ) : (
-                    cards.map((card) => (
+                    (libraryFilter === "review" ? cards.slice(0, 5) : cards).map((card) => (
                       <button
                         key={card.id}
                         onClick={() => setSelectedCardId(card.id)}
@@ -351,35 +367,7 @@ export default function Home() {
                       </button>
                     ))
                   )}
-                </section>
-              )}
-
-              {activeNav === "Review" && (
-                <section className="card-parchment rounded-[32px] p-6 shadow-[0_20px_40px_rgba(15,23,42,0.04)] sm:p-8">
-                  {cards.length === 0 ? (
-                    <EmptyState title={t("emptyReviewTitle", lang)} body={t("emptyReviewBody", lang)} />
-                  ) : (
-                    <div className="space-y-4">
-                      {cards.slice(0, 5).map((card, index) => (
-                        <div key={card.id} className="rounded-[24px] border border-[var(--card-border)] bg-[var(--input-bg)] p-5">
-                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                            <div>
-                              <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--accent)]">🔮 {t("labelReview", lang)} {index + 1}</p>
-                              <h3 className="font-display mt-2 text-[30px] leading-tight">{card.title}</h3>
-                            </div>
-                            <button onClick={() => { setSelectedCardId(card.id); setActiveNav("Library"); }} className="rounded-full bg-[var(--card-bg)] px-4 py-2 text-sm text-[var(--text)] shadow-[0_8px_20px_rgba(15,23,42,0.06)]">
-                              {t("btnOpenCard", lang)}
-                            </button>
-                          </div>
-                          <ul className="mt-4 space-y-2 text-sm leading-6 text-[var(--text-secondary)]">
-                            {card.keyInsights.slice(0, 3).map((insight) => (
-                              <li key={insight} className="flex gap-3"><span className="mt-[10px] h-1.5 w-1.5 rounded-full bg-[var(--accent)]" /><span>{insight}</span></li>
-                            ))}
-                          </ul>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  </div>
                 </section>
               )}
 
