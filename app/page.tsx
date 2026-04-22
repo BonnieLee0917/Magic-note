@@ -20,7 +20,11 @@ type PensieveFilter = "today" | "starred";
 type ReviewAction = "remember" | "fuzzy" | "forgot";
 
 type Annotation = {
-  text: string;
+  id: string;
+  type: 'highlight' | 'note' | 'highlight_note';
+  highlightText?: string;
+  note?: string;
+  text?: string; // legacy
   createdAt: string;
 };
 
@@ -39,6 +43,8 @@ type StoredCard = {
   isPensieve: boolean;
   annotations: Annotation[];
   reviewSchedule: ReviewSchedule;
+  rawContent?: string;
+  sourceUrl?: string;
 };
 
 const STORAGE_KEY = "magic-note-cards";
@@ -109,12 +115,22 @@ function migrateCard(raw: unknown): StoredCard | null {
         .map((item) => {
           if (!item || typeof item !== "object") return null;
           const entry = item as Record<string, unknown>;
-          return typeof entry.text === "string"
-            ? {
-                text: entry.text,
-                createdAt: typeof entry.createdAt === "string" ? entry.createdAt : new Date().toISOString(),
-              }
-            : null;
+          // Support legacy { text, createdAt } format
+          if (typeof entry.text === "string" && !entry.type) {
+            return {
+              id: typeof entry.id === "string" ? entry.id : crypto.randomUUID(),
+              type: 'note' as const,
+              note: entry.text,
+              createdAt: typeof entry.createdAt === "string" ? entry.createdAt : new Date().toISOString(),
+            };
+          }
+          return {
+            id: typeof entry.id === "string" ? entry.id : crypto.randomUUID(),
+            type: (entry.type === 'highlight' || entry.type === 'note' || entry.type === 'highlight_note') ? entry.type : 'note',
+            highlightText: typeof entry.highlightText === "string" ? entry.highlightText : undefined,
+            note: typeof entry.note === "string" ? entry.note : (typeof entry.text === "string" ? entry.text : undefined),
+            createdAt: typeof entry.createdAt === "string" ? entry.createdAt : new Date().toISOString(),
+          } as Annotation;
         })
         .filter((item): item is Annotation => Boolean(item))
     : [];
@@ -137,6 +153,8 @@ function migrateCard(raw: unknown): StoredCard | null {
     isPensieve: Boolean(card.isPensieve) || annotations.length > 0,
     annotations,
     reviewSchedule,
+    rawContent: typeof card.rawContent === "string" ? card.rawContent : undefined,
+    sourceUrl: typeof card.sourceUrl === "string" ? card.sourceUrl : undefined,
   };
 }
 
@@ -176,6 +194,10 @@ export default function Home() {
   const [annotationDraft, setAnnotationDraft] = useState("");
   const [activeAnnotationCardId, setActiveAnnotationCardId] = useState<string | null>(null);
   const [pensieveReviewIndex, setPensieveReviewIndex] = useState(0);
+  const [readingCardId, setReadingCardId] = useState<string | null>(null);
+  const [highlightTooltip, setHighlightTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
+  const [highlightNoteInput, setHighlightNoteInput] = useState<{ text: string; note: string } | null>(null);
+  const [clickedHighlightId, setClickedHighlightId] = useState<string | null>(null);
 
   useEffect(() => {
     const savedTheme = (localStorage.getItem("magic-note-theme") as Theme) || "dark";
@@ -285,6 +307,8 @@ export default function Home() {
         isPensieve: false,
         annotations: [],
         reviewSchedule: getDefaultSchedule(),
+        rawContent: result.rawContent || undefined,
+        sourceUrl: result.sourceUrl || undefined,
       };
 
       setCards((prev) => [newCard, ...prev]);
@@ -344,17 +368,17 @@ export default function Home() {
     updateCard(cardId, (card) => ({
       ...card,
       isPensieve: true,
-      annotations: [...card.annotations, { text: annotationDraft.trim(), createdAt: new Date().toISOString() }],
+      annotations: [...card.annotations, { id: crypto.randomUUID(), type: 'note' as const, note: annotationDraft.trim(), createdAt: new Date().toISOString() }],
     }));
     setAnnotationDraft("");
     setActiveAnnotationCardId(null);
   }
 
-  function deleteAnnotation(cardId: string, createdAt: string) {
+  function deleteAnnotation(cardId: string, annotationId: string) {
     updateCard(cardId, (card) => ({
       ...card,
-      annotations: card.annotations.filter((item) => item.createdAt !== createdAt),
-      isPensieve: card.annotations.filter((item) => item.createdAt !== createdAt).length > 0 || card.isPensieve,
+      annotations: card.annotations.filter((item) => item.id !== annotationId && item.createdAt !== annotationId),
+      isPensieve: card.annotations.filter((item) => item.id !== annotationId && item.createdAt !== annotationId).length > 0 || card.isPensieve,
     }));
   }
 
@@ -378,6 +402,11 @@ export default function Home() {
 
   const localizedSelected = selectedCard ? getLocalizedCard(selectedCard, lang) : null;
   const quizQuestions: QuizQuestion[] = quiz?.[lang]?.questions ?? [];
+  const readingCard = cards.find((c) => c.id === readingCardId) ?? null;
+  const answeredCount = Object.keys(selectedAnswers).length;
+  const totalQuestions = quizQuestions.length;
+  const allAnswered = totalQuestions > 0 && answeredCount === totalQuestions;
+  const correctCount = quizQuestions.filter((q, i) => selectedAnswers[i] === q.correctIndex).length;
 
   return (
     <main className="min-h-screen text-[var(--text)] theme-transition">
@@ -434,7 +463,7 @@ export default function Home() {
         </aside>
 
         <section className="flex-1 px-4 py-4 sm:px-6 sm:py-6 lg:px-10 lg:py-8">
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_390px]">
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_420px]">
             <div className="space-y-6">
               <header className="card-parchment rounded-[32px] px-6 py-6 shadow-[0_20px_40px_rgba(15,23,42,0.04)] sm:px-8">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -524,7 +553,7 @@ export default function Home() {
                         return (
                           <button
                             key={card.id}
-                            onClick={() => setSelectedCardId(card.id)}
+                            onClick={() => { setSelectedCardId(card.id); setReadingCardId(card.id); }}
                             className={`theme-transition rounded-[28px] border px-5 py-5 text-left ${
                               selectedCard?.id === card.id
                                 ? "border-[var(--highlight-border)] bg-[var(--highlight-bg)] shadow-[0_18px_36px_rgba(201,168,76,0.12)]"
@@ -630,9 +659,17 @@ export default function Home() {
                         <p className="mt-6 text-sm leading-6 text-[var(--text-secondary)]">{t("emptyQuizBody", lang)}</p>
                       ) : (
                         <div className="mt-8 space-y-6">
-                          <div className="rounded-[24px] bg-[var(--gold-light)] px-4 py-3 text-sm text-[var(--accent)]">{t("quizGeneratedFor", lang)} {quizCardTitle}</div>
+                          <div className="flex items-center justify-between rounded-[24px] bg-[var(--gold-light)] px-4 py-3 text-sm text-[var(--accent)]">
+                            <span>{t("quizGeneratedFor", lang)} {quizCardTitle}</span>
+                            <span>{t("quizProgress", lang).replace('{current}', String(answeredCount)).replace('{total}', String(totalQuestions))}</span>
+                          </div>
+                          {/* Progress bar */}
+                          <div className="h-2 w-full rounded-full bg-[var(--input-bg)]">
+                            <div className="h-2 rounded-full bg-[var(--accent)] transition-all" style={{ width: `${totalQuestions > 0 ? (answeredCount / totalQuestions) * 100 : 0}%` }} />
+                          </div>
                           {quizQuestions.map((question, index) => {
                             const selected = selectedAnswers[index];
+                            const showResult = selected !== undefined;
                             return (
                               <div key={index} className="rounded-[26px] border border-[var(--card-border)] p-5">
                                 <p className="text-sm text-[var(--accent)]">{t("labelQuestion", lang)} {index + 1}</p>
@@ -641,28 +678,47 @@ export default function Home() {
                                   {question.options.map((option, optionIndex) => {
                                     const isPicked = selected === optionIndex;
                                     const isCorrect = question.correctIndex === optionIndex;
-                                    const showResult = selected !== undefined;
+                                    const isWrong = showResult && isPicked && !isCorrect;
                                     return (
                                       <button
                                         key={`${option}-${optionIndex}`}
-                                        onClick={() => setSelectedAnswers((prev) => ({ ...prev, [index]: optionIndex }))}
-                                        className={`rounded-[20px] border px-4 py-3 text-left text-sm ${
+                                        onClick={() => { if (!showResult) setSelectedAnswers((prev) => ({ ...prev, [index]: optionIndex })); }}
+                                        disabled={showResult}
+                                        className={`rounded-[20px] border px-4 py-3 text-left text-sm transition-all ${
                                           showResult && isCorrect
-                                            ? "border-[var(--highlight-border)] bg-[var(--highlight-bg)]"
-                                            : isPicked
-                                              ? "border-[var(--btn-bg)] bg-[var(--tag-bg)]"
-                                              : "border-[var(--card-border)] hover:bg-[var(--input-bg)]"
+                                            ? "border-green-500 bg-green-500/10"
+                                            : isWrong
+                                              ? "border-red-500 bg-red-500/10"
+                                              : showResult
+                                                ? "border-[var(--card-border)] opacity-50 cursor-not-allowed"
+                                                : "border-[var(--card-border)] hover:bg-[var(--input-bg)] cursor-pointer"
                                         }`}
                                       >
-                                        {option}
+                                        <span className="flex items-center justify-between">
+                                          <span>{option}</span>
+                                          {showResult && isCorrect && <span>✅</span>}
+                                          {isWrong && <span>❌</span>}
+                                        </span>
                                       </button>
                                     );
                                   })}
                                 </div>
-                                {selected !== undefined && <p className="mt-4 text-sm leading-6 text-[var(--text-secondary)]">{question.explanation}</p>}
+                                {showResult && <p className="mt-4 text-sm leading-6 text-[var(--text-secondary)]">{question.explanation}</p>}
                               </div>
                             );
                           })}
+                          {/* Score summary */}
+                          {allAnswered && (
+                            <div className="rounded-[26px] border border-[var(--highlight-border)] bg-[var(--highlight-bg)] p-6 text-center">
+                              <p className="font-display text-2xl">{t("quizComplete", lang)}</p>
+                              <p className="mt-2 text-lg text-[var(--text)]">{t("quizScore", lang)}：{correctCount}/{totalQuestions}</p>
+                              <p className="text-sm text-[var(--text-secondary)]">{t("quizAccuracy", lang)}：{Math.round((correctCount / totalQuestions) * 100)}%</p>
+                              <div className="mt-4 flex justify-center gap-3">
+                                <button onClick={() => { handleGenerateQuiz(); }} className="rounded-full bg-[var(--btn-bg)] px-5 py-2 text-sm text-white">{t("btnRetry", lang)}</button>
+                                <button onClick={() => { setQuiz(null); setSelectedAnswers({}); }} className="rounded-full bg-[var(--tag-bg)] px-5 py-2 text-sm text-[var(--text-secondary)]">{t("btnDismiss", lang)}</button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </>
@@ -803,6 +859,261 @@ export default function Home() {
           </div>
         </section>
       </div>
+
+      {/* Fullscreen Reading Overlay */}
+      {readingCard && (() => {
+        const rc = readingCard;
+        const localized = getLocalizedCard(rc, lang);
+        const hasRaw = Boolean(rc.rawContent && rc.rawContent.trim());
+        const highlights = rc.annotations.filter(a => a.type === 'highlight' || a.type === 'highlight_note');
+        const allAnnotations = rc.annotations;
+
+        function renderHighlightedText(text: string) {
+          if (!highlights.length) return text;
+          const result = text;
+          const parts: Array<{ text: string; annotationId?: string }> = [];
+          let remaining = result;
+          // Simple approach: find and mark highlights
+          for (const h of highlights) {
+            if (!h.highlightText) continue;
+            const idx = remaining.indexOf(h.highlightText);
+            if (idx >= 0) {
+              if (idx > 0) parts.push({ text: remaining.slice(0, idx) });
+              parts.push({ text: h.highlightText, annotationId: h.id });
+              remaining = remaining.slice(idx + h.highlightText.length);
+            }
+          }
+          if (remaining) parts.push({ text: remaining });
+          if (parts.length === 0) return text;
+          return parts;
+        }
+
+        const textParts = hasRaw ? renderHighlightedText(rc.rawContent!) : null;
+
+        function handleTextSelect() {
+          const sel = window.getSelection();
+          if (!sel || sel.isCollapsed || !sel.toString().trim()) {
+            setHighlightTooltip(null);
+            return;
+          }
+          const range = sel.getRangeAt(0);
+          const rect = range.getBoundingClientRect();
+          setHighlightTooltip({
+            x: rect.left + rect.width / 2,
+            y: rect.top - 10,
+            text: sel.toString().trim(),
+          });
+        }
+
+        function addHighlight(text: string, withNote: boolean) {
+          if (withNote) {
+            setHighlightNoteInput({ text, note: '' });
+          } else {
+            updateCard(rc.id, (card) => ({
+              ...card,
+              annotations: [...card.annotations, { id: crypto.randomUUID(), type: 'highlight' as const, highlightText: text, createdAt: new Date().toISOString() }],
+            }));
+          }
+          setHighlightTooltip(null);
+          window.getSelection()?.removeAllRanges();
+        }
+
+        function saveHighlightNote() {
+          if (!highlightNoteInput) return;
+          updateCard(rc.id, (card) => ({
+            ...card,
+            annotations: [...card.annotations, {
+              id: crypto.randomUUID(),
+              type: 'highlight_note' as const,
+              highlightText: highlightNoteInput.text,
+              note: highlightNoteInput.note,
+              createdAt: new Date().toISOString(),
+            }],
+          }));
+          setHighlightNoteInput(null);
+        }
+
+        return (
+          <div className="fixed inset-0 z-50 flex flex-col bg-black/60 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) { setReadingCardId(null); setHighlightTooltip(null); setHighlightNoteInput(null); setClickedHighlightId(null); } }}>
+            <div className="mx-auto flex h-full w-full max-w-[1400px] flex-col overflow-hidden rounded-none bg-[var(--sidebar-bg)] shadow-2xl lg:my-4 lg:rounded-[32px]">
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-[var(--card-border)] px-6 py-4">
+                <button onClick={() => { setReadingCardId(null); setHighlightTooltip(null); }} className="rounded-full bg-[var(--tag-bg)] px-4 py-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text)]">{t("btnBack", lang)}</button>
+                <div className="flex gap-2">
+                  <button onClick={() => togglePensieve(rc.id)} className="rounded-full bg-[var(--gold-light)] px-4 py-2 text-sm text-[var(--accent)]">
+                    {rc.isPensieve ? t("btnRemoveFromPensieve", lang) : t("btnSaveToPensieve", lang)}
+                  </button>
+                  <button onClick={() => { setReadingCardId(null); setHighlightTooltip(null); }} className="rounded-full bg-[var(--tag-bg)] px-3 py-2 text-sm text-[var(--text-secondary)]">{t("btnClose", lang)}</button>
+                </div>
+              </div>
+
+              {/* Content */}
+              <div className="flex flex-1 overflow-hidden">
+                {/* Left: Original text (60%) */}
+                <div className="relative flex-[3] overflow-y-auto border-r border-[var(--card-border)] p-6" onMouseUp={hasRaw ? handleTextSelect : undefined}>
+                  <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--accent)]">{t("labelRawContent", lang)}</p>
+                  {rc.sourceUrl && (
+                    <a href={rc.sourceUrl} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1 text-sm text-[var(--accent)] hover:underline">
+                      {t("btnViewSource", lang)}
+                    </a>
+                  )}
+                  {hasRaw ? (
+                    <div className="mt-4 whitespace-pre-wrap text-sm leading-8 text-[var(--text)]">
+                      {Array.isArray(textParts) ? textParts.map((part, i) => 
+                        part.annotationId ? (
+                          <mark
+                            key={i}
+                            className="cursor-pointer rounded bg-yellow-400/30 px-0.5"
+                            onClick={() => setClickedHighlightId(clickedHighlightId === part.annotationId ? null : part.annotationId!)}
+                          >
+                            {part.text}
+                            {clickedHighlightId === part.annotationId && (() => {
+                              const ann = allAnnotations.find(a => a.id === part.annotationId);
+                              return ann ? (
+                                <span className="relative">
+                                  <span className="absolute -top-1 left-0 z-10 mt-[-60px] w-[250px] rounded-[16px] border border-[var(--card-border)] bg-[var(--card-bg)] p-3 shadow-lg" onClick={(e) => e.stopPropagation()}>
+                                    {ann.note && <p className="text-sm text-[var(--text)]">{ann.note}</p>}
+                                    {!ann.note && <p className="text-xs text-[var(--text-secondary)]">{t("btnHighlight", lang)}</p>}
+                                    <div className="mt-2 flex gap-2">
+                                      <button onClick={() => deleteAnnotation(rc.id, ann.id)} className="text-xs text-red-400">{t("btnDelete", lang)}</button>
+                                    </div>
+                                  </span>
+                                </span>
+                              ) : null;
+                            })()}
+                          </mark>
+                        ) : <span key={i}>{part.text}</span>
+                      ) : textParts}
+                    </div>
+                  ) : (
+                    <div className="mt-4 space-y-4">
+                      <p className="text-sm text-[var(--text-secondary)]">{t("labelNoRawContent", lang)}</p>
+                      <div className="rounded-[20px] bg-[var(--input-bg)] p-4">
+                        <h4 className="text-base font-medium text-[var(--text)]">{localized.title}</h4>
+                        <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">{localized.summary}</p>
+                        <div className="mt-4 space-y-2">
+                          {localized.keyInsights.map((insight, i) => (
+                            <p key={i} className="text-sm text-[var(--text-secondary)]">• {insight}</p>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Highlight tooltip */}
+                  {highlightTooltip && (
+                    <div
+                      className="fixed z-[60] flex gap-1 rounded-full border border-[var(--card-border)] bg-[var(--card-bg)] px-2 py-1.5 shadow-xl"
+                      style={{ left: highlightTooltip.x, top: highlightTooltip.y, transform: 'translate(-50%, -100%)' }}
+                    >
+                      <button onClick={() => addHighlight(highlightTooltip.text, false)} className="rounded-full bg-yellow-400/20 px-3 py-1 text-xs text-[var(--text)] hover:bg-yellow-400/40">{t("btnHighlight", lang)}</button>
+                      <button onClick={() => addHighlight(highlightTooltip.text, true)} className="rounded-full bg-[var(--gold-light)] px-3 py-1 text-xs text-[var(--accent)] hover:bg-[var(--accent)]/20">{t("btnHighlightNote", lang)}</button>
+                    </div>
+                  )}
+
+                  {/* Highlight note input */}
+                  {highlightNoteInput && (
+                    <div className="mt-4 rounded-[20px] border border-[var(--highlight-border)] bg-[var(--highlight-bg)] p-4">
+                      <p className="text-xs text-[var(--accent)]">✦ &ldquo;{highlightNoteInput.text}&rdquo;</p>
+                      <textarea
+                        value={highlightNoteInput.note}
+                        onChange={(e) => setHighlightNoteInput({ ...highlightNoteInput, note: e.target.value })}
+                        placeholder={t("highlightNotePlaceholder", lang)}
+                        className="mt-2 min-h-[80px] w-full rounded-[14px] border border-[var(--input-border)] bg-[var(--card-bg)] px-3 py-2 text-sm text-[var(--text)] outline-none"
+                        autoFocus
+                      />
+                      <div className="mt-2 flex gap-2">
+                        <button onClick={saveHighlightNote} className="rounded-full bg-[var(--btn-bg)] px-4 py-1.5 text-xs text-white">{t("btnSaveAnnotation", lang)}</button>
+                        <button onClick={() => setHighlightNoteInput(null)} className="rounded-full bg-[var(--tag-bg)] px-4 py-1.5 text-xs text-[var(--text-secondary)]">{t("btnCancel", lang)}</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Right: AI Analysis (40%) */}
+                <div className="flex-[2] overflow-y-auto p-6">
+                  <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--accent)]">{t("labelAiAnalysis", lang)}</p>
+                  <h3 className="font-display mt-3 text-[28px] leading-tight tracking-[-0.03em]">{localized.title}</h3>
+                  <p className="mt-4 text-sm leading-7 text-[var(--text-secondary)]">{localized.summary}</p>
+
+                  <div className="mt-6">
+                    <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--accent)]">{t("labelKeyInsights", lang)}</p>
+                    <ul className="mt-3 space-y-2">
+                      {localized.keyInsights.map((insight, i) => (
+                        <li key={i} className="flex gap-2 text-sm leading-6 text-[var(--text-secondary)]">
+                          <span className="mt-[10px] h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent)]" />
+                          <span>{insight}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {localized.tags.map((tag) => (
+                      <span key={tag} className="rounded-full bg-[var(--tag-bg)] px-3 py-1 text-xs text-[var(--text-secondary)]">#{tag}</span>
+                    ))}
+                  </div>
+
+                  <div className="mt-6 rounded-[20px] bg-[var(--gold-light)] p-4">
+                    <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--accent)]">{t("labelFollowUp", lang)}</p>
+                    <ul className="mt-3 space-y-2 text-sm leading-6 text-[var(--text-secondary)]">
+                      {localized.followUpQuestions.map((q, i) => <li key={i}>✧ {q}</li>)}
+                    </ul>
+                  </div>
+
+                  {/* Annotations section */}
+                  <div className="mt-6">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--accent)]">{t("labelAnnotations", lang)}</p>
+                      <button
+                        onClick={() => { setActiveAnnotationCardId(rc.id); setAnnotationDraft(""); }}
+                        className="rounded-full bg-[var(--gold-light)] px-3 py-1.5 text-xs text-[var(--accent)]"
+                      >{t("btnAddAnnotation", lang)}</button>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {allAnnotations.map((ann) => (
+                        <div key={ann.id} className="rounded-[16px] bg-[var(--input-bg)] px-4 py-3">
+                          {ann.highlightText && <p className="text-xs text-[var(--accent)]">🖍 &ldquo;{ann.highlightText}&rdquo;</p>}
+                          {(ann.note || ann.text) && <p className="mt-1 text-sm text-[var(--text)]">{ann.note || ann.text}</p>}
+                          <div className="mt-1 flex items-center justify-between">
+                            <span className="text-xs text-[var(--text-secondary)]">{formatDateTime(ann.createdAt, lang)}</span>
+                            <button onClick={() => deleteAnnotation(rc.id, ann.id)} className="text-xs text-red-400">{t("btnDelete", lang)}</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {activeAnnotationCardId === rc.id && (
+                      <div className="mt-3">
+                        <textarea
+                          value={annotationDraft}
+                          onChange={(e) => setAnnotationDraft(e.target.value)}
+                          placeholder={t("annotationPlaceholder", lang)}
+                          className="min-h-[80px] w-full rounded-[14px] border border-[var(--input-border)] bg-[var(--card-bg)] px-3 py-2 text-sm text-[var(--text)] outline-none"
+                          autoFocus
+                        />
+                        <div className="mt-2 flex gap-2">
+                          <button onClick={() => saveAnnotation(rc.id)} className="rounded-full bg-[var(--btn-bg)] px-4 py-1.5 text-xs text-white">{t("btnSaveAnnotation", lang)}</button>
+                          <button onClick={() => { setActiveAnnotationCardId(null); setAnnotationDraft(""); }} className="rounded-full bg-[var(--tag-bg)] px-4 py-1.5 text-xs text-[var(--text-secondary)]">{t("btnCancel", lang)}</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Generate quiz button */}
+                  <button
+                    onClick={() => { setSelectedCardId(rc.id); handleGenerateQuiz(); setReadingCardId(null); }}
+                    disabled={quizLoading}
+                    className="mt-6 w-full rounded-full bg-[var(--btn-bg)] px-5 py-3 text-sm text-white hover:bg-[var(--btn-hover)] disabled:opacity-70"
+                  >
+                    {quizLoading ? <span className="spinner" /> : t("btnGenerateQuiz", lang)}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </main>
   );
 }
@@ -839,7 +1150,7 @@ function PensieveReviewCard({
           <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--accent)]">{t("labelAnnotations", lang)}</p>
           <ul className="mt-3 space-y-2 text-sm text-[var(--text-secondary)]">
             {card.annotations.map((annotation) => (
-              <li key={annotation.createdAt}>✦ {annotation.text}</li>
+              <li key={annotation.id || annotation.createdAt}>✦ {annotation.note || annotation.text}</li>
             ))}
           </ul>
         </div>
@@ -889,13 +1200,13 @@ function PensieveStarredCard({
         </div>
         <div className="mt-3 space-y-3">
           {card.annotations.map((annotation) => (
-            <div key={annotation.createdAt} className="rounded-[18px] bg-[var(--card-bg)] px-4 py-3">
+            <div key={annotation.id || annotation.createdAt} className="rounded-[18px] bg-[var(--card-bg)] px-4 py-3">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm text-[var(--text)]">{annotation.text}</p>
+                  <p className="text-sm text-[var(--text)]">{annotation.note || annotation.text}</p>
                   <p className="mt-2 text-xs text-[var(--text-secondary)]">{formatDateTime(annotation.createdAt, lang)}</p>
                 </div>
-                <button onClick={() => onDeleteAnnotation(card.id, annotation.createdAt)} className="text-xs text-[var(--accent)]">{t("btnDelete", lang)}</button>
+                <button onClick={() => onDeleteAnnotation(card.id, annotation.id || annotation.createdAt)} className="text-xs text-[var(--accent)]">{t("btnDelete", lang)}</button>
               </div>
             </div>
           ))}

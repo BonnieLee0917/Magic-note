@@ -118,6 +118,27 @@ const translations = {
   btnCancel: { zh: "取消", en: "Cancel" },
   btnDelete: { zh: "删除", en: "Delete" },
   reviewComplete: { zh: "🎉 复习完成！", en: "🎉 Review complete!" },
+
+  // Reading view
+  btnBack: { zh: "← 返回", en: "← Back" },
+  btnClose: { zh: "✕", en: "✕" },
+  labelRawContent: { zh: "📜 原文", en: "📜 Original" },
+  labelAiAnalysis: { zh: "✨ AI 分析", en: "✨ AI Analysis" },
+  labelSource: { zh: "来源", en: "Source" },
+  btnViewSource: { zh: "🔗 查看原文链接", en: "🔗 View source" },
+  btnHighlight: { zh: "🖍 高亮", en: "🖍 Highlight" },
+  btnHighlightNote: { zh: "📝 高亮+批注", en: "📝 Highlight+Note" },
+  labelNoRawContent: { zh: "此卡片无原文内容", en: "No original content for this card" },
+  highlightNotePlaceholder: { zh: "写下你对这段文字的思考...", en: "Write your thoughts on this passage..." },
+  btnEditNote: { zh: "编辑", en: "Edit" },
+
+  // Quiz improvements
+  quizComplete: { zh: "🎯 测验完成！", en: "🎯 Quiz Complete!" },
+  quizScore: { zh: "正确", en: "Correct" },
+  quizAccuracy: { zh: "准确率", en: "Accuracy" },
+  btnRetry: { zh: "🔄 重新测验", en: "🔄 Retry" },
+  btnDismiss: { zh: "✕ 收起", en: "✕ Dismiss" },
+  quizProgress: { zh: "第 {current}/{total} 题", en: "Q {current}/{total}" },
 } as const;
 
 export type TKey = keyof typeof translations;

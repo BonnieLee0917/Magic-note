@@ -29,6 +29,8 @@ export type AnalysisResult = {
 export type LocalizedResult = {
   zh: AnalysisResult;
   en: AnalysisResult;
+  rawContent?: string;
+  sourceUrl?: string;
 };
 
 export type QuizQuestion = {
