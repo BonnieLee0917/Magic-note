@@ -41,7 +41,7 @@ const headerMap: Record<NavKey, TKey> = {
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
-  const [theme, setTheme] = useState<Theme>("light");
+  const [theme, setTheme] = useState<Theme>("dark");
   const [lang, setLang] = useState<Lang>("zh");
   const [activeNav, setActiveNav] = useState<NavKey>("Inbox");
   const [inputMode, setInputMode] = useState<InputMode>("text");
@@ -59,7 +59,7 @@ export default function Home() {
   const [selectedAnswers, setSelectedAnswers] = useState<Record<number, number>>({});
 
   useEffect(() => {
-    const savedTheme = (localStorage.getItem("magic-note-theme") as Theme) || "light";
+    const savedTheme = (localStorage.getItem("magic-note-theme") as Theme) || "dark";
     const savedLang = (localStorage.getItem("magic-note-lang") as Lang) || "zh";
     setTheme(savedTheme);
     setLang(savedLang);
