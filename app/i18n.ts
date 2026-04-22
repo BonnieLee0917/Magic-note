@@ -11,6 +11,7 @@ const translations = {
   navLibrary: { zh: "📜 咒语图书馆", en: "📜 Spell Library" },
   navQuiz: { zh: "⚡ 魔法测验", en: "⚡ Spell Quiz" },
   navMap: { zh: "🌙 星图", en: "🌙 Star Map" },
+  navPensieve: { zh: "🔮 冥想盆", en: "🔮 Pensieve" },
   navProfile: { zh: "🗝️ 密室", en: "🗝️ Chamber" },
 
   // Headers
@@ -18,6 +19,7 @@ const translations = {
   headerLibrary: { zh: "你的咒语收藏馆", en: "A clean library of insights" },
   headerQuiz: { zh: "检验你的魔法修行", en: "Test what you actually learned" },
   headerMap: { zh: "探索你的知识星图", en: "See your knowledge by domain" },
+  headerPensieve: { zh: "重温值得铭记的思绪", en: "Revisit memories worth keeping" },
   headerProfile: { zh: "你的修炼档案", en: "Your study rhythm" },
 
   // Sub headers
@@ -95,6 +97,27 @@ const translations = {
   // Library filter
   filterAll: { zh: "全部", en: "All" },
   filterReview: { zh: "待复习", en: "To Review" },
+
+  // Pensieve
+  filterTodayReview: { zh: "今日复习", en: "Today's Review" },
+  filterStarred: { zh: "重点标注", en: "Starred" },
+  btnAddAnnotation: { zh: "✏️ 添加批注", en: "✏️ Add Note" },
+  btnSaveToPensieve: { zh: "🔮 存入冥想盆", en: "🔮 Save to Pensieve" },
+  btnRemoveFromPensieve: { zh: "移出冥想盆", en: "Remove from Pensieve" },
+  btnRemember: { zh: "😊 记得", en: "😊 Remember" },
+  btnFuzzy: { zh: "🤔 模糊", en: "🤔 Fuzzy" },
+  btnForgot: { zh: "😵 忘了", en: "😵 Forgot" },
+  labelNextReview: { zh: "下次复习", en: "Next review" },
+  labelAnnotations: { zh: "学习批注", en: "Study Notes" },
+  emptyPensieveTitle: { zh: "🔮 冥想盆还是空的", en: "🔮 Pensieve is empty" },
+  emptyPensieveBody: { zh: "在图书馆中将卡片存入冥想盆，开始你的深度复习之旅。", en: "Save cards to Pensieve from the Library to start your deep review journey." },
+  emptyReviewTitle: { zh: "✨ 今天没有需要复习的卡片", en: "✨ No cards to review today" },
+  emptyReviewBody: { zh: "所有卡片都已复习完毕，休息一下吧！", en: "All caught up! Take a break." },
+  annotationPlaceholder: { zh: "写下你的思考...", en: "Write your thoughts..." },
+  btnSaveAnnotation: { zh: "保存", en: "Save" },
+  btnCancel: { zh: "取消", en: "Cancel" },
+  btnDelete: { zh: "删除", en: "Delete" },
+  reviewComplete: { zh: "🎉 复习完成！", en: "🎉 Review complete!" },
 } as const;
 
 export type TKey = keyof typeof translations;

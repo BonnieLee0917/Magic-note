@@ -26,6 +26,11 @@ export type AnalysisResult = {
   followUpQuestions: string[];
 };
 
+export type LocalizedResult = {
+  zh: AnalysisResult;
+  en: AnalysisResult;
+};
+
 export type QuizQuestion = {
   question: string;
   options: string[];
@@ -33,15 +38,20 @@ export type QuizQuestion = {
   explanation: string;
 };
 
-export async function analyzeScreenshot(base64Image: string): Promise<AnalysisResult> {
+export type LocalizedQuiz = {
+  zh: { questions: QuizQuestion[] };
+  en: { questions: QuizQuestion[] };
+};
+
+export async function analyzeScreenshot(base64Image: string): Promise<LocalizedResult> {
   return apiCall("/api/analyze/screenshot", { image: base64Image });
 }
 
-export async function analyzeLink(url: string): Promise<AnalysisResult> {
+export async function analyzeLink(url: string): Promise<LocalizedResult> {
   return apiCall("/api/analyze/link", { url });
 }
 
-export async function analyzeText(text: string): Promise<AnalysisResult> {
+export async function analyzeText(text: string): Promise<LocalizedResult> {
   return apiCall("/api/analyze/text", { text });
 }
 
@@ -50,7 +60,6 @@ export async function generateQuiz(card: {
   summary: string;
   tags: string[];
   domain: string;
-}): Promise<{ questions: QuizQuestion[] }> {
+}): Promise<LocalizedQuiz> {
   return apiCall("/api/quiz/generate", card);
 }
-// force redeploy Thu Apr  9 08:48:24 PM CST 2026

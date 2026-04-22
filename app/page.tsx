@@ -3,6 +3,8 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import {
   AnalysisResult,
+  LocalizedResult,
+  LocalizedQuiz,
   QuizQuestion,
   analyzeLink,
   analyzeScreenshot,
@@ -11,20 +13,50 @@ import {
 } from "./lib/api";
 import { Lang, t, TKey } from "./i18n";
 
-type NavKey = "Inbox" | "Library" | "Quiz" | "Map" | "Profile";
-type LibraryFilter = "all" | "review";
+type NavKey = "Inbox" | "Library" | "Pensieve" | "Quiz" | "Map" | "Profile";
 type InputMode = "text" | "link" | "screenshot";
 type Theme = "light" | "dark";
+type PensieveFilter = "today" | "starred";
+type ReviewAction = "remember" | "fuzzy" | "forgot";
 
-type StoredCard = AnalysisResult & {
+type Annotation = {
+  text: string;
+  createdAt: string;
+};
+
+type ReviewSchedule = {
+  nextReviewAt: string;
+  interval: number;
+  level: number;
+};
+
+type StoredCard = {
   id: string;
   sourceType: InputMode;
   createdAt: string;
+  zh: AnalysisResult;
+  en: AnalysisResult;
+  isPensieve: boolean;
+  annotations: Annotation[];
+  reviewSchedule: ReviewSchedule;
+};
+
+const STORAGE_KEY = "magic-note-cards";
+const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 60];
+
+const EMPTY_RESULT: AnalysisResult = {
+  title: "",
+  summary: "",
+  keyInsights: [],
+  tags: [],
+  domain: "",
+  followUpQuestions: [],
 };
 
 const navItems: Array<{ key: NavKey; label: TKey }> = [
   { key: "Inbox", label: "navInbox" },
   { key: "Library", label: "navLibrary" },
+  { key: "Pensieve", label: "navPensieve" },
   { key: "Quiz", label: "navQuiz" },
   { key: "Map", label: "navMap" },
   { key: "Profile", label: "navProfile" },
@@ -33,10 +65,94 @@ const navItems: Array<{ key: NavKey; label: TKey }> = [
 const headerMap: Record<NavKey, TKey> = {
   Inbox: "headerInbox",
   Library: "headerLibrary",
+  Pensieve: "headerPensieve",
   Quiz: "headerQuiz",
   Map: "headerMap",
   Profile: "headerProfile",
 };
+
+function getDefaultSchedule(createdAt?: string): ReviewSchedule {
+  const next = new Date(createdAt ?? Date.now());
+  next.setDate(next.getDate() + REVIEW_INTERVALS[0]);
+  return {
+    nextReviewAt: next.toISOString(),
+    interval: REVIEW_INTERVALS[0],
+    level: 0,
+  };
+}
+
+function coerceResult(value: unknown): AnalysisResult {
+  if (!value || typeof value !== "object") return EMPTY_RESULT;
+  const data = value as Partial<AnalysisResult>;
+  return {
+    title: typeof data.title === "string" ? data.title : "",
+    summary: typeof data.summary === "string" ? data.summary : "",
+    keyInsights: Array.isArray(data.keyInsights) ? data.keyInsights.filter((item): item is string => typeof item === "string") : [],
+    tags: Array.isArray(data.tags) ? data.tags.filter((item): item is string => typeof item === "string") : [],
+    domain: typeof data.domain === "string" ? data.domain : "",
+    followUpQuestions: Array.isArray(data.followUpQuestions)
+      ? data.followUpQuestions.filter((item): item is string => typeof item === "string")
+      : [],
+  };
+}
+
+function migrateCard(raw: unknown): StoredCard | null {
+  if (!raw || typeof raw !== "object") return null;
+  const card = raw as Record<string, unknown>;
+  const legacy = coerceResult(card);
+  const zh = coerceResult(card.zh ?? legacy);
+  const en = coerceResult(card.en ?? legacy);
+  const createdAt = typeof card.createdAt === "string" ? card.createdAt : new Date().toISOString();
+
+  const annotations = Array.isArray(card.annotations)
+    ? card.annotations
+        .map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const entry = item as Record<string, unknown>;
+          return typeof entry.text === "string"
+            ? {
+                text: entry.text,
+                createdAt: typeof entry.createdAt === "string" ? entry.createdAt : new Date().toISOString(),
+              }
+            : null;
+        })
+        .filter((item): item is Annotation => Boolean(item))
+    : [];
+
+  const reviewScheduleSource = card.reviewSchedule as Partial<ReviewSchedule> | undefined;
+  const reviewSchedule: ReviewSchedule = {
+    nextReviewAt: typeof reviewScheduleSource?.nextReviewAt === "string"
+      ? reviewScheduleSource.nextReviewAt
+      : getDefaultSchedule(createdAt).nextReviewAt,
+    interval: typeof reviewScheduleSource?.interval === "number" ? reviewScheduleSource.interval : REVIEW_INTERVALS[0],
+    level: typeof reviewScheduleSource?.level === "number" ? reviewScheduleSource.level : 0,
+  };
+
+  return {
+    id: typeof card.id === "string" ? card.id : crypto.randomUUID(),
+    sourceType: card.sourceType === "link" || card.sourceType === "screenshot" ? card.sourceType : "text",
+    createdAt,
+    zh,
+    en,
+    isPensieve: Boolean(card.isPensieve) || annotations.length > 0,
+    annotations,
+    reviewSchedule,
+  };
+}
+
+function getLocalizedCard(card: StoredCard, lang: Lang): AnalysisResult {
+  return lang === "zh" ? card.zh : card.en;
+}
+
+function buildNextSchedule(current: ReviewSchedule, action: ReviewAction): ReviewSchedule {
+  const now = new Date();
+  let level = current.level;
+  if (action === "remember") level = Math.min(current.level + 1, REVIEW_INTERVALS.length - 1);
+  if (action === "forgot") level = 0;
+  const interval = REVIEW_INTERVALS[level];
+  now.setDate(now.getDate() + interval);
+  return { nextReviewAt: now.toISOString(), interval, level };
+}
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
@@ -53,20 +169,34 @@ export default function Home() {
   const [cards, setCards] = useState<StoredCard[]>([]);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [quizLoading, setQuizLoading] = useState(false);
-  const [quiz, setQuiz] = useState<QuizQuestion[]>([]);
+  const [quiz, setQuiz] = useState<LocalizedQuiz | null>(null);
   const [quizCardTitle, setQuizCardTitle] = useState("");
   const [selectedAnswers, setSelectedAnswers] = useState<Record<number, number>>({});
-  const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("all");
+  const [pensieveFilter, setPensieveFilter] = useState<PensieveFilter>("today");
+  const [annotationDraft, setAnnotationDraft] = useState("");
+  const [activeAnnotationCardId, setActiveAnnotationCardId] = useState<string | null>(null);
+  const [pensieveReviewIndex, setPensieveReviewIndex] = useState(0);
 
   useEffect(() => {
     const savedTheme = (localStorage.getItem("magic-note-theme") as Theme) || "dark";
     const savedLang = (localStorage.getItem("magic-note-lang") as Lang) || "zh";
+    const rawCards = localStorage.getItem(STORAGE_KEY);
+    const parsedCards = rawCards ? JSON.parse(rawCards) : [];
+    const migratedCards = Array.isArray(parsedCards) ? parsedCards.map(migrateCard).filter((item): item is StoredCard => Boolean(item)) : [];
+
     setTheme(savedTheme);
     setLang(savedLang);
+    setCards(migratedCards);
+    setSelectedCardId(migratedCards[0]?.id ?? null);
     document.documentElement.setAttribute("data-theme", savedTheme);
     document.documentElement.lang = savedLang;
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(cards));
+  }, [cards, mounted]);
 
   function toggleTheme() {
     const nextTheme = theme === "light" ? "dark" : "light";
@@ -87,38 +217,54 @@ export default function Home() {
     [cards, selectedCardId],
   );
 
+  const dueReviewCards = useMemo(
+    () => cards.filter((card) => card.isPensieve && new Date(card.reviewSchedule.nextReviewAt).getTime() <= Date.now()),
+    [cards],
+  );
+
+  const pensieveCards = useMemo(() => cards.filter((card) => card.isPensieve), [cards]);
+
+  useEffect(() => {
+    if (pensieveReviewIndex >= dueReviewCards.length) {
+      setPensieveReviewIndex(Math.max(dueReviewCards.length - 1, 0));
+    }
+  }, [dueReviewCards.length, pensieveReviewIndex]);
+
+  const currentReviewCard = dueReviewCards[pensieveReviewIndex] ?? null;
+
   const dashboard = useMemo(() => {
     const domainCount = new Map<string, number>();
     cards.forEach((card) => {
-      domainCount.set(card.domain, (domainCount.get(card.domain) ?? 0) + 1);
+      const domain = getLocalizedCard(card, lang).domain || t("labelNoDomain", lang);
+      domainCount.set(domain, (domainCount.get(domain) ?? 0) + 1);
     });
 
     const topDomain = Array.from(domainCount.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? t("labelNoDomain", lang);
-    const allTags = Array.from(new Set(cards.flatMap((card) => card.tags))).slice(0, 6);
+    const allTags = Array.from(new Set(cards.flatMap((card) => getLocalizedCard(card, lang).tags))).slice(0, 6);
 
     return {
       totalCards: cards.length,
-      reviewCount: Math.min(cards.length, 5),
+      reviewCount: dueReviewCards.length,
       quizReady: cards.length,
       topDomain,
       tags: allTags,
     };
-  }, [cards, lang]);
+  }, [cards, dueReviewCards.length, lang]);
 
   const mapGroups = useMemo(() => {
     const grouped = new Map<string, StoredCard[]>();
     cards.forEach((card) => {
-      const key = card.domain || "General";
+      const key = getLocalizedCard(card, lang).domain || "General";
       grouped.set(key, [...(grouped.get(key) ?? []), card]);
     });
     return Array.from(grouped.entries());
-  }, [cards]);
+  }, [cards, lang]);
 
   async function handleAnalyze() {
     setLoading(true);
     setError("");
     try {
-      let result: AnalysisResult;
+      let result: LocalizedResult;
       if (inputMode === "text") {
         if (!textInput.trim()) throw new Error(t("errorPasteText", lang));
         result = await analyzeText(textInput.trim());
@@ -131,10 +277,14 @@ export default function Home() {
       }
 
       const newCard: StoredCard = {
-        ...result,
         id: crypto.randomUUID(),
         sourceType: inputMode,
         createdAt: new Date().toISOString(),
+        zh: coerceResult(result.zh),
+        en: coerceResult(result.en),
+        isPensieve: false,
+        annotations: [],
+        reviewSchedule: getDefaultSchedule(),
       };
 
       setCards((prev) => [newCard, ...prev]);
@@ -151,6 +301,29 @@ export default function Home() {
     }
   }
 
+  async function handleGenerateQuiz() {
+    if (!selectedCard) return;
+    const localized = getLocalizedCard(selectedCard, lang);
+    setQuizLoading(true);
+    setError("");
+    try {
+      const response = await generateQuiz({
+        title: localized.title,
+        summary: localized.summary,
+        tags: localized.tags,
+        domain: localized.domain,
+      });
+      setQuiz(response);
+      setQuizCardTitle(localized.title);
+      setSelectedAnswers({});
+      setActiveNav("Quiz");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("errorQuiz", lang));
+    } finally {
+      setQuizLoading(false);
+    }
+  }
+
   async function handleImageUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -162,29 +335,49 @@ export default function Home() {
     reader.readAsDataURL(file);
   }
 
-  async function handleGenerateQuiz() {
-    if (!selectedCard) return;
-    setQuizLoading(true);
-    setError("");
-    try {
-      const response = await generateQuiz({
-        title: selectedCard.title,
-        summary: selectedCard.summary,
-        tags: selectedCard.tags,
-        domain: selectedCard.domain,
-      });
-      setQuiz(response.questions ?? []);
-      setQuizCardTitle(selectedCard.title);
-      setSelectedAnswers({});
-      setActiveNav("Quiz");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("errorQuiz", lang));
-    } finally {
-      setQuizLoading(false);
-    }
+  function updateCard(cardId: string, updater: (card: StoredCard) => StoredCard) {
+    setCards((prev) => prev.map((card) => (card.id === cardId ? updater(card) : card)));
+  }
+
+  function saveAnnotation(cardId: string) {
+    if (!annotationDraft.trim()) return;
+    updateCard(cardId, (card) => ({
+      ...card,
+      isPensieve: true,
+      annotations: [...card.annotations, { text: annotationDraft.trim(), createdAt: new Date().toISOString() }],
+    }));
+    setAnnotationDraft("");
+    setActiveAnnotationCardId(null);
+  }
+
+  function deleteAnnotation(cardId: string, createdAt: string) {
+    updateCard(cardId, (card) => ({
+      ...card,
+      annotations: card.annotations.filter((item) => item.createdAt !== createdAt),
+      isPensieve: card.annotations.filter((item) => item.createdAt !== createdAt).length > 0 || card.isPensieve,
+    }));
+  }
+
+  function togglePensieve(cardId: string) {
+    updateCard(cardId, (card) => ({
+      ...card,
+      isPensieve: !card.isPensieve,
+    }));
+  }
+
+  function handleReview(cardId: string, action: ReviewAction) {
+    updateCard(cardId, (card) => ({
+      ...card,
+      reviewSchedule: buildNextSchedule(card.reviewSchedule, action),
+      isPensieve: true,
+    }));
+    setPensieveReviewIndex((prev) => Math.max(prev, 0));
   }
 
   if (!mounted) return null;
+
+  const localizedSelected = selectedCard ? getLocalizedCard(selectedCard, lang) : null;
+  const quizQuestions: QuizQuestion[] = quiz?.[lang]?.questions ?? [];
 
   return (
     <main className="min-h-screen text-[var(--text)] theme-transition">
@@ -247,9 +440,7 @@ export default function Home() {
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                   <div>
                     <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--accent)]">{t(navItems.find((item) => item.key === activeNav)?.label || "navInbox", lang)}</p>
-                    <h2 className="font-display mt-2 text-4xl leading-[0.95] tracking-[-0.04em] sm:text-[52px]">
-                      {t(headerMap[activeNav], lang)}
-                    </h2>
+                    <h2 className="font-display mt-2 text-4xl leading-[0.95] tracking-[-0.04em] sm:text-[52px]">{t(headerMap[activeNav], lang)}</h2>
                   </div>
                   <p className="max-w-[34ch] text-sm leading-6 text-[var(--text-secondary)]">{t("subHeader", lang)}</p>
                 </div>
@@ -324,75 +515,123 @@ export default function Home() {
 
               {activeNav === "Library" && (
                 <section>
-                  <div className="mb-4 flex gap-2">
-                    {(["all", "review"] as LibraryFilter[]).map((f) => (
+                  <div className={cards.length <= 2 ? "space-y-4" : "grid gap-4 md:grid-cols-2 xl:grid-cols-3"}>
+                    {cards.length === 0 ? (
+                      <EmptyState title={t("emptyLibraryTitle", lang)} body={t("emptyLibraryBody", lang)} />
+                    ) : (
+                      cards.map((card) => {
+                        const localized = getLocalizedCard(card, lang);
+                        return (
+                          <button
+                            key={card.id}
+                            onClick={() => setSelectedCardId(card.id)}
+                            className={`theme-transition rounded-[28px] border px-5 py-5 text-left ${
+                              selectedCard?.id === card.id
+                                ? "border-[var(--highlight-border)] bg-[var(--highlight-bg)] shadow-[0_18px_36px_rgba(201,168,76,0.12)]"
+                                : "border-[var(--card-border)] bg-[var(--card-bg)] shadow-[0_20px_40px_rgba(15,23,42,0.04)] hover:-translate-y-0.5"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="rounded-full bg-[var(--tag-bg)] px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-[var(--accent)]">{card.sourceType}</span>
+                              <span className="text-xs text-[var(--text-secondary)]">{formatDate(card.createdAt, lang)}</span>
+                            </div>
+                            <h3 className="font-display mt-4 text-xl leading-tight tracking-[-0.02em] text-[var(--text)]">{localized.title}</h3>
+                            <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">{localized.summary}</p>
+                            <div className="mt-4 flex flex-wrap gap-2">
+                              {localized.tags.slice(0, 3).map((tag) => (
+                                <span key={tag} className="rounded-full bg-[var(--tag-bg)] px-3 py-1 text-xs text-[var(--text-secondary)]">#{tag}</span>
+                              ))}
+                            </div>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </section>
+              )}
+
+              {activeNav === "Pensieve" && (
+                <section className="space-y-6">
+                  <div className="flex gap-2">
+                    {([
+                      { key: "today", label: "filterTodayReview" },
+                      { key: "starred", label: "filterStarred" },
+                    ] as Array<{ key: PensieveFilter; label: TKey }>).map((item) => (
                       <button
-                        key={f}
-                        onClick={() => setLibraryFilter(f)}
+                        key={item.key}
+                        onClick={() => setPensieveFilter(item.key)}
                         className={`theme-transition rounded-full px-4 py-2 text-sm ${
-                          libraryFilter === f
-                            ? "bg-[var(--btn-bg)] text-white shadow-[0_0_18px_rgba(201,168,76,0.18)]"
-                            : "bg-[var(--tag-bg)] text-[var(--text-secondary)] hover:text-[var(--text)]"
+                          pensieveFilter === item.key ? "bg-[var(--btn-bg)] text-white" : "bg-[var(--tag-bg)] text-[var(--text-secondary)]"
                         }`}
                       >
-                        {t(f === "all" ? "filterAll" : "filterReview", lang)}
+                        {t(item.label, lang)}
                       </button>
                     ))}
                   </div>
-                  <div className={(libraryFilter === "review" ? cards.slice(0, 5) : cards).length <= 2 ? "space-y-4" : "grid gap-4 md:grid-cols-2 xl:grid-cols-3"}>
-                  {cards.length === 0 ? (
-                    <EmptyState title={t("emptyLibraryTitle", lang)} body={t("emptyLibraryBody", lang)} />
+
+                  {pensieveFilter === "today" ? (
+                    !currentReviewCard ? (
+                      <EmptyState title={t("emptyReviewTitle", lang)} body={t("emptyReviewBody", lang)} />
+                    ) : (
+                      <PensieveReviewCard
+                        card={currentReviewCard}
+                        lang={lang}
+                        onRemember={() => handleReview(currentReviewCard.id, "remember")}
+                        onFuzzy={() => handleReview(currentReviewCard.id, "fuzzy")}
+                        onForgot={() => handleReview(currentReviewCard.id, "forgot")}
+                      />
+                    )
+                  ) : pensieveCards.length === 0 ? (
+                    <EmptyState title={t("emptyPensieveTitle", lang)} body={t("emptyPensieveBody", lang)} />
                   ) : (
-                    (libraryFilter === "review" ? cards.slice(0, 5) : cards).map((card) => (
-                      <button
-                        key={card.id}
-                        onClick={() => setSelectedCardId(card.id)}
-                        className={`theme-transition rounded-[28px] border px-5 py-5 text-left ${
-                          selectedCard?.id === card.id
-                            ? "border-[var(--highlight-border)] bg-[var(--highlight-bg)] shadow-[0_18px_36px_rgba(201,168,76,0.12)]"
-                            : "border-[var(--card-border)] bg-[var(--card-bg)] shadow-[0_20px_40px_rgba(15,23,42,0.04)] hover:-translate-y-0.5"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="rounded-full bg-[var(--tag-bg)] px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-[var(--accent)]">{card.sourceType}</span>
-                          <span className="text-xs text-[var(--text-secondary)]">{formatDate(card.createdAt, lang)}</span>
-                        </div>
-                        <h3 className="font-display mt-4 text-xl leading-tight tracking-[-0.02em] text-[var(--text)]">{card.title}</h3>
-                        <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">{card.summary}</p>
-                        <div className="mt-4 flex flex-wrap gap-2">
-                          {card.tags.slice(0, 3).map((tag) => (
-                            <span key={tag} className="rounded-full bg-[var(--tag-bg)] px-3 py-1 text-xs text-[var(--text-secondary)]">#{tag}</span>
-                          ))}
-                        </div>
-                      </button>
-                    ))
+                    <div className="space-y-4">
+                      {pensieveCards.map((card) => (
+                        <PensieveStarredCard
+                          key={card.id}
+                          card={card}
+                          lang={lang}
+                          onDeleteAnnotation={deleteAnnotation}
+                          onOpenAnnotation={() => {
+                            setActiveAnnotationCardId(card.id);
+                            setAnnotationDraft("");
+                          }}
+                          isEditing={activeAnnotationCardId === card.id}
+                          annotationDraft={activeAnnotationCardId === card.id ? annotationDraft : ""}
+                          onAnnotationDraftChange={setAnnotationDraft}
+                          onSaveAnnotation={() => saveAnnotation(card.id)}
+                          onCancelAnnotation={() => {
+                            setActiveAnnotationCardId(null);
+                            setAnnotationDraft("");
+                          }}
+                        />
+                      ))}
+                    </div>
                   )}
-                  </div>
                 </section>
               )}
 
               {activeNav === "Quiz" && (
                 <section className="card-parchment rounded-[32px] p-6 shadow-[0_20px_40px_rgba(15,23,42,0.04)] sm:p-8">
-                  {!selectedCard ? (
+                  {!localizedSelected ? (
                     <EmptyState title={t("emptyQuizTitle", lang)} body={t("emptyQuizTitleBody", lang)} />
                   ) : (
                     <>
                       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                         <div>
                           <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--accent)]">{t("labelQuizSource", lang)}</p>
-                          <h3 className="font-display mt-2 text-[36px] leading-tight tracking-[-0.03em]">{selectedCard.title}</h3>
+                          <h3 className="font-display mt-2 text-[36px] leading-tight tracking-[-0.03em]">{localizedSelected.title}</h3>
                         </div>
                         <button onClick={handleGenerateQuiz} disabled={quizLoading} className="inline-flex items-center justify-center gap-3 rounded-full bg-[var(--btn-bg)] px-5 py-3 text-sm text-white hover:bg-[var(--btn-hover)] disabled:opacity-70">
                           {quizLoading ? <span className="spinner" /> : <span>{t("btnGenerateQuiz", lang)}</span>}
                         </button>
                       </div>
 
-                      {quiz.length === 0 ? (
+                      {quizQuestions.length === 0 ? (
                         <p className="mt-6 text-sm leading-6 text-[var(--text-secondary)]">{t("emptyQuizBody", lang)}</p>
                       ) : (
                         <div className="mt-8 space-y-6">
                           <div className="rounded-[24px] bg-[var(--gold-light)] px-4 py-3 text-sm text-[var(--accent)]">{t("quizGeneratedFor", lang)} {quizCardTitle}</div>
-                          {quiz.map((question, index) => {
+                          {quizQuestions.map((question, index) => {
                             const selected = selectedAnswers[index];
                             return (
                               <div key={index} className="rounded-[26px] border border-[var(--card-border)] p-5">
@@ -447,7 +686,7 @@ export default function Home() {
                           <div className="mt-5 space-y-3">
                             {domainCards.map((card, index) => (
                               <button key={card.id} onClick={() => { setSelectedCardId(card.id); setActiveNav("Library"); }} className="block w-full rounded-[18px] border border-[var(--card-border)] bg-[var(--card-bg)] px-4 py-3 text-left text-sm text-[var(--text)] shadow-[0_8px_18px_rgba(15,23,42,0.05)]">
-                                <span className="mr-2 text-[var(--accent)]">{index % 2 === 0 ? "✧" : "✦"}</span>{card.title}
+                                <span className="mr-2 text-[var(--accent)]">{index % 2 === 0 ? "✧" : "✦"}</span>{getLocalizedCard(card, lang).title}
                               </button>
                             ))}
                           </div>
@@ -482,7 +721,7 @@ export default function Home() {
                 <div className="flex items-center justify-between gap-4">
                   <div>
                     <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--accent)]">{t("labelSelectedCard", lang)}</p>
-                    <h3 className="font-display mt-2 text-[34px] leading-tight tracking-[-0.03em]">{selectedCard?.title || t("labelWaiting", lang)}</h3>
+                    <h3 className="font-display mt-2 text-[34px] leading-tight tracking-[-0.03em]">{localizedSelected?.title || t("labelWaiting", lang)}</h3>
                   </div>
                   {selectedCard && (
                     <button onClick={handleGenerateQuiz} disabled={quizLoading} className="rounded-full bg-[var(--gold-light)] px-4 py-2 text-sm text-[var(--accent)] hover:shadow-[0_0_16px_rgba(201,168,76,0.18)] disabled:opacity-60">
@@ -491,18 +730,51 @@ export default function Home() {
                   )}
                 </div>
 
-                {selectedCard ? (
+                {localizedSelected && selectedCard ? (
                   <>
-                    <p className="mt-4 text-sm leading-7 text-[var(--text-secondary)]">{selectedCard.summary}</p>
+                    <p className="mt-4 text-sm leading-7 text-[var(--text-secondary)]">{localizedSelected.summary}</p>
                     <div className="mt-5 flex flex-wrap gap-2">
-                      {selectedCard.tags.map((tag) => (
+                      {localizedSelected.tags.map((tag) => (
                         <span key={tag} className="rounded-full bg-[var(--tag-bg)] px-3 py-1 text-xs text-[var(--text-secondary)]">#{tag}</span>
                       ))}
                     </div>
+                    <div className="mt-6 flex flex-wrap gap-2">
+                      <button
+                        onClick={() => {
+                          setActiveAnnotationCardId(selectedCard.id);
+                          setAnnotationDraft("");
+                        }}
+                        className="rounded-full bg-[var(--btn-bg)] px-4 py-2 text-sm text-white"
+                      >
+                        {t("btnAddAnnotation", lang)}
+                      </button>
+                      <button
+                        onClick={() => togglePensieve(selectedCard.id)}
+                        className="rounded-full bg-[var(--gold-light)] px-4 py-2 text-sm text-[var(--accent)]"
+                      >
+                        {selectedCard.isPensieve ? t("btnRemoveFromPensieve", lang) : t("btnSaveToPensieve", lang)}
+                      </button>
+                    </div>
+
+                    {activeAnnotationCardId === selectedCard.id && (
+                      <div className="mt-4 rounded-[24px] bg-[var(--input-bg)] p-4">
+                        <textarea
+                          value={annotationDraft}
+                          onChange={(e) => setAnnotationDraft(e.target.value)}
+                          placeholder={t("annotationPlaceholder", lang)}
+                          className="min-h-[100px] w-full rounded-[18px] border border-[var(--input-border)] bg-[var(--card-bg)] px-4 py-3 text-sm text-[var(--text)] outline-none"
+                        />
+                        <div className="mt-3 flex gap-2">
+                          <button onClick={() => saveAnnotation(selectedCard.id)} className="rounded-full bg-[var(--btn-bg)] px-4 py-2 text-sm text-white">{t("btnSaveAnnotation", lang)}</button>
+                          <button onClick={() => { setActiveAnnotationCardId(null); setAnnotationDraft(""); }} className="rounded-full bg-[var(--tag-bg)] px-4 py-2 text-sm text-[var(--text-secondary)]">{t("btnCancel", lang)}</button>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="mt-6">
                       <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--accent)]">{t("labelKeyInsights", lang)}</p>
                       <ul className="mt-4 space-y-3">
-                        {selectedCard.keyInsights.map((insight) => (
+                        {localizedSelected.keyInsights.map((insight) => (
                           <li key={insight} className="flex gap-3 text-sm leading-6 text-[var(--text-secondary)]"><span className="mt-[10px] h-1.5 w-1.5 rounded-full bg-[var(--accent)]" /><span>{insight}</span></li>
                         ))}
                       </ul>
@@ -510,7 +782,7 @@ export default function Home() {
                     <div className="mt-6 rounded-[24px] bg-[var(--gold-light)] p-4">
                       <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--accent)]">{t("labelFollowUp", lang)}</p>
                       <ul className="mt-3 space-y-2 text-sm leading-6 text-[var(--text-secondary)]">
-                        {selectedCard.followUpQuestions.map((question) => <li key={question}>✧ {question}</li>)}
+                        {localizedSelected.followUpQuestions.map((question) => <li key={question}>✧ {question}</li>)}
                       </ul>
                     </div>
                   </>
@@ -532,6 +804,118 @@ export default function Home() {
         </section>
       </div>
     </main>
+  );
+}
+
+function PensieveReviewCard({
+  card,
+  lang,
+  onRemember,
+  onFuzzy,
+  onForgot,
+}: {
+  card: StoredCard;
+  lang: Lang;
+  onRemember: () => void;
+  onFuzzy: () => void;
+  onForgot: () => void;
+}) {
+  const localized = getLocalizedCard(card, lang);
+  return (
+    <article className="card-parchment rounded-[32px] p-6 shadow-[0_20px_40px_rgba(15,23,42,0.04)] sm:p-8">
+      <div className="flex items-center justify-between gap-4">
+        <span className="rounded-full bg-[var(--tag-bg)] px-3 py-1 text-xs text-[var(--accent)]">Lv.{card.reviewSchedule.level}</span>
+        <span className="text-sm text-[var(--text-secondary)]">{t("labelNextReview", lang)} {formatDate(card.reviewSchedule.nextReviewAt, lang)}</span>
+      </div>
+      <h3 className="font-display mt-4 text-[34px] leading-tight tracking-[-0.03em]">{localized.title}</h3>
+      <p className="mt-4 text-sm leading-7 text-[var(--text-secondary)]">{localized.summary}</p>
+      <div className="mt-5 space-y-3">
+        {localized.keyInsights.map((insight) => (
+          <div key={insight} className="rounded-[20px] bg-[var(--input-bg)] px-4 py-3 text-sm text-[var(--text-secondary)]">{insight}</div>
+        ))}
+      </div>
+      {card.annotations.length > 0 && (
+        <div className="mt-6 rounded-[24px] bg-[var(--gold-light)] p-4">
+          <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--accent)]">{t("labelAnnotations", lang)}</p>
+          <ul className="mt-3 space-y-2 text-sm text-[var(--text-secondary)]">
+            {card.annotations.map((annotation) => (
+              <li key={annotation.createdAt}>✦ {annotation.text}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div className="mt-6 grid gap-3 sm:grid-cols-3">
+        <button onClick={onRemember} className="rounded-full bg-[var(--btn-bg)] px-4 py-3 text-sm text-white">{t("btnRemember", lang)}</button>
+        <button onClick={onFuzzy} className="rounded-full bg-[var(--tag-bg)] px-4 py-3 text-sm text-[var(--text)]">{t("btnFuzzy", lang)}</button>
+        <button onClick={onForgot} className="rounded-full bg-[var(--gold-light)] px-4 py-3 text-sm text-[var(--accent)]">{t("btnForgot", lang)}</button>
+      </div>
+    </article>
+  );
+}
+
+function PensieveStarredCard({
+  card,
+  lang,
+  onDeleteAnnotation,
+  onOpenAnnotation,
+  isEditing,
+  annotationDraft,
+  onAnnotationDraftChange,
+  onSaveAnnotation,
+  onCancelAnnotation,
+}: {
+  card: StoredCard;
+  lang: Lang;
+  onDeleteAnnotation: (cardId: string, createdAt: string) => void;
+  onOpenAnnotation: () => void;
+  isEditing: boolean;
+  annotationDraft: string;
+  onAnnotationDraftChange: (value: string) => void;
+  onSaveAnnotation: () => void;
+  onCancelAnnotation: () => void;
+}) {
+  const localized = getLocalizedCard(card, lang);
+  return (
+    <article className="rounded-[28px] border border-[var(--card-border)] bg-[var(--card-bg)] p-5 shadow-[0_20px_40px_rgba(15,23,42,0.04)]">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="font-display text-[28px] leading-tight tracking-[-0.03em]">{localized.title}</h3>
+        <span className="text-xs text-[var(--text-secondary)]">{t("labelNextReview", lang)} {formatDate(card.reviewSchedule.nextReviewAt, lang)}</span>
+      </div>
+      <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">{localized.summary}</p>
+      <div className="mt-4 rounded-[24px] bg-[var(--input-bg)] p-4">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--accent)]">{t("labelAnnotations", lang)}</p>
+          <button onClick={onOpenAnnotation} className="rounded-full bg-[var(--gold-light)] px-3 py-1.5 text-xs text-[var(--accent)]">{t("btnAddAnnotation", lang)}</button>
+        </div>
+        <div className="mt-3 space-y-3">
+          {card.annotations.map((annotation) => (
+            <div key={annotation.createdAt} className="rounded-[18px] bg-[var(--card-bg)] px-4 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm text-[var(--text)]">{annotation.text}</p>
+                  <p className="mt-2 text-xs text-[var(--text-secondary)]">{formatDateTime(annotation.createdAt, lang)}</p>
+                </div>
+                <button onClick={() => onDeleteAnnotation(card.id, annotation.createdAt)} className="text-xs text-[var(--accent)]">{t("btnDelete", lang)}</button>
+              </div>
+            </div>
+          ))}
+        </div>
+        {isEditing && (
+          <div className="mt-4">
+            <textarea
+              value={annotationDraft}
+              onChange={(e) => onAnnotationDraftChange(e.target.value)}
+              placeholder={t("annotationPlaceholder", lang)}
+              className="min-h-[100px] w-full rounded-[18px] border border-[var(--input-border)] bg-[var(--card-bg)] px-4 py-3 text-sm text-[var(--text)] outline-none"
+            />
+            <div className="mt-3 flex gap-2">
+              <button onClick={onSaveAnnotation} className="rounded-full bg-[var(--btn-bg)] px-4 py-2 text-sm text-white">{t("btnSaveAnnotation", lang)}</button>
+              <button onClick={onCancelAnnotation} className="rounded-full bg-[var(--tag-bg)] px-4 py-2 text-sm text-[var(--text-secondary)]">{t("btnCancel", lang)}</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </article>
   );
 }
 
@@ -574,4 +958,8 @@ function EmptyState({ title, body }: { title: string; body: string }) {
 
 function formatDate(value: string, lang: Lang) {
   return new Date(value).toLocaleDateString(lang === "zh" ? "zh-CN" : "en-US", { month: "short", day: "numeric" });
+}
+
+function formatDateTime(value: string, lang: Lang) {
+  return new Date(value).toLocaleString(lang === "zh" ? "zh-CN" : "en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
