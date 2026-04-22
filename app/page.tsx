@@ -888,7 +888,31 @@ export default function Home() {
           return parts;
         }
 
-        const textParts = hasRaw ? renderHighlightedText(rc.rawContent!) : null;
+        function normalizeRawTextForReading(text: string) {
+          const trimmed = text.trim();
+          if (!trimmed) return trimmed;
+          // If paragraph structure already exists, keep it.
+          const lineBreakCount = (trimmed.match(/\n\n/g) || []).length;
+          if (lineBreakCount >= 2) return trimmed;
+
+          // Heuristic for old imported cards: split dense text into readable paragraphs.
+          const sentences = trimmed
+            .replace(/\s+/g, ' ')
+            .split(/(?<=[。！？!?\.])\s*/)
+            .map((s) => s.trim())
+            .filter(Boolean);
+
+          if (sentences.length < 4) return trimmed;
+
+          const paragraphs: string[] = [];
+          for (let i = 0; i < sentences.length; i += 3) {
+            paragraphs.push(sentences.slice(i, i + 3).join(' '));
+          }
+          return paragraphs.join('\n\n');
+        }
+
+        const normalizedRawText = hasRaw ? normalizeRawTextForReading(rc.rawContent!) : "";
+        const textParts = hasRaw ? renderHighlightedText(normalizedRawText) : null;
 
         function handleTextSelect() {
           const sel = window.getSelection();
@@ -958,7 +982,7 @@ export default function Home() {
                     </a>
                   )}
                   {hasRaw ? (
-                    <div className="mt-4 whitespace-pre-wrap text-sm leading-8 text-[var(--text)]">
+                    <div className="mt-4 max-w-[72ch] whitespace-pre-wrap text-[15px] leading-8 text-[var(--text)] [text-wrap:pretty]">
                       {Array.isArray(textParts) ? textParts.map((part, i) => 
                         part.annotationId ? (
                           <mark
