@@ -963,7 +963,7 @@ export default function Home() {
                         part.annotationId ? (
                           <mark
                             key={i}
-                            className="cursor-pointer rounded bg-yellow-400/30 px-0.5"
+                            className="cursor-pointer rounded bg-yellow-400/30 px-0.5 whitespace-pre-line"
                             onClick={() => setClickedHighlightId(clickedHighlightId === part.annotationId ? null : part.annotationId!)}
                           >
                             {part.text}
