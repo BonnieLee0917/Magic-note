@@ -255,7 +255,7 @@ export default function Home() {
                 </div>
               </header>
 
-              {(activeNav === "Inbox" || activeNav === "Library") && (
+              {activeNav === "Inbox" && (
                 <section className="card-parchment rounded-[32px] px-6 py-6 shadow-[0_20px_40px_rgba(15,23,42,0.04)] sm:px-8">
                   <div className="flex flex-wrap items-center gap-3">
                     {([
@@ -323,7 +323,7 @@ export default function Home() {
               )}
 
               {activeNav === "Library" && (
-                <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                <section className={cards.length <= 2 ? "space-y-4" : "grid gap-4 md:grid-cols-2 xl:grid-cols-3"}>
                   {cards.length === 0 ? (
                     <EmptyState title={t("emptyLibraryTitle", lang)} body={t("emptyLibraryBody", lang)} />
                   ) : (
@@ -341,7 +341,7 @@ export default function Home() {
                           <span className="rounded-full bg-[var(--tag-bg)] px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-[var(--accent)]">{card.sourceType}</span>
                           <span className="text-xs text-[var(--text-secondary)]">{formatDate(card.createdAt, lang)}</span>
                         </div>
-                        <h3 className="font-display mt-4 text-[28px] leading-tight tracking-[-0.02em] text-[var(--text)]">{card.title}</h3>
+                        <h3 className="font-display mt-4 text-xl leading-tight tracking-[-0.02em] text-[var(--text)]">{card.title}</h3>
                         <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">{card.summary}</p>
                         <div className="mt-4 flex flex-wrap gap-2">
                           {card.tags.slice(0, 3).map((tag) => (
